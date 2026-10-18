@@ -4,6 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AegisNet 3D Enterprise — Public Cyber Defense &amp; Multi-OSINT Threat Intelligence</title>
+    <!-- Embedded SVG Favicon (Mencegah Error 404 /favicon.ico di Browser & Server Produksi) -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' fill='%23030712'/%3E%3Cpath d='m9 12 2 2 4-4'/%3E%3C/svg%3E">
+    <link rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2300f0ff' stroke-width='2'%3E%3Cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3E%3C/svg%3E">
+    <!-- Filter Peringatan Konsol Non-Kritis untuk Lingkungan Produksi Standalone -->
+    <script>
+        (function() {
+            const origWarn = console.warn;
+            console.warn = function(...args) {
+                const msg = args && args[0] ? String(args[0]) : '';
+                if (
+                    msg.includes('cdn.tailwindcss.com should not be used in production') ||
+                    msg.includes('using deprecated parameters for the initialization function')
+                ) {
+                    return;
+                }
+                origWarn.apply(console, args);
+            };
+        })();
+    </script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Three.js r128 -->
