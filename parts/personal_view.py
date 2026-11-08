@@ -217,12 +217,12 @@ PERSONAL_VIEW = """
                     </div>
                     <span class="text-[10px] font-mono text-amber-300">SHA-1 Prefix</span>
                 </div>
-                <div class="flex gap-1.5">
+                <form onsubmit="event.preventDefault(); checkPasswordBreachHIBP(); return false;" autocomplete="off" class="flex gap-1.5 w-full">
                     <input id="vault-password-input" type="password" class="flex-1 bg-slate-950/80 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-400" placeholder="Ketik kata sandi untuk diuji...">
-                    <button onclick="checkPasswordBreachHIBP()" class="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-200 font-semibold text-xs transition">
+                    <button type="submit" class="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/50 text-amber-200 font-semibold text-xs transition">
                         Audit Sandi
                     </button>
-                </div>
+                </form>
                 <div id="vault-password-result" class="text-[11px] font-mono text-slate-400 bg-slate-950 p-2 rounded border border-slate-800">
                     Ketik kata sandi untuk menghitung entropi Shannon dan memeriksa apakah telah bocor di 10+ miliar record HIBP tanpa mengirim sandi ke jaringan.
                 </div>

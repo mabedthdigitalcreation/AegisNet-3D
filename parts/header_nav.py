@@ -2,14 +2,19 @@
 
 HEADER_NAV = """
 <body class="bg-cyber-bg text-slate-100 min-h-screen flex flex-col justify-between selection:bg-cyan-500 selection:text-black relative antialiased">
-    <!-- Scanline Texture -->
+    <!-- Scanline Overlay -->
     <div class="fixed inset-0 scanline-overlay z-10 pointer-events-none"></div>
 
-    <!-- 3D Three.js WebGL Canvas -->
-    <div id="canvas-container" class="fixed inset-0 z-0 pointer-events-auto"></div>
+    <!-- 1. 2D Tactical World Map Canvas (FortiGuard Style Full World Map) -->
+    <div id="tactical-map-container" class="fixed inset-0 z-0 pointer-events-auto">
+        <canvas id="tactical-map-canvas"></canvas>
+    </div>
 
-    <!-- Floating 3D Node Tooltip Popover -->
-    <div id="node-tooltip-overlay" class="hidden hud-panel rounded-xl p-3 min-w-[260px] max-w-[320px] text-xs space-y-1.5 shadow-2xl border border-rose-500/50 bg-slate-950/95">
+    <!-- 2. 3D Three.js WebGL Canvas (Spherical Cyber Globe) -->
+    <div id="canvas-container" class="fixed inset-0 z-0 pointer-events-auto hidden"></div>
+
+    <!-- Floating 3D/2D Node Tooltip Popover -->
+    <div id="node-tooltip-overlay" class="hidden hud-panel rounded-xl p-3 min-w-[270px] max-w-[340px] text-xs space-y-1.5 shadow-2xl border border-rose-500/50 bg-slate-950/95">
         <div class="flex items-center justify-between border-b border-rose-500/30 pb-1.5">
             <span class="inline-flex items-center gap-1.5 font-bold text-rose-400 text-[11px] uppercase tracking-wider">
                 <span class="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
@@ -45,7 +50,7 @@ HEADER_NAV = """
     </div>
 
     <!-- Header Navigation -->
-    <header class="relative z-30 px-3 sm:px-6 py-2.5 max-w-[1780px] mx-auto w-full flex flex-wrap items-center justify-between gap-2.5 border-b border-cyan-500/15 bg-slate-950/60 backdrop-blur-md">
+    <header class="relative z-30 px-3 sm:px-6 py-2.5 max-w-[1780px] mx-auto w-full flex flex-wrap items-center justify-between gap-2.5 border-b border-cyan-500/15 bg-slate-950/70 backdrop-blur-md">
         <!-- Logo & Brand -->
         <div class="flex items-center gap-3">
             <div class="relative flex items-center justify-center w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-400/40 shadow-[0_0_15px_rgba(0,240,255,0.25)]">
@@ -58,35 +63,40 @@ HEADER_NAV = """
                     <span class="hidden sm:inline-block px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">v14.0 SOC</span>
                 </div>
                 <div class="text-[10px] text-slate-400 font-mono tracking-tight hidden sm:block">
-                    REAL-TIME ANOMALY GUARD • ZERO-SIMULATION ARCHITECTURE
+                    LIVE THREAT MAP &bull; REAL-TIME ATTACK STREAMS &bull; BY MABEDTH DIGITAL CREATION
                 </div>
             </div>
         </div>
 
         <!-- Center: Dual-Mode Workspace Switcher Tabs -->
-        <div class="hud-panel rounded-2xl p-1 flex items-center gap-1 shadow-lg bg-slate-900/80 border border-cyan-500/30">
+        <div class="hud-panel rounded-2xl p-1 flex items-center gap-1 shadow-lg bg-slate-900/90 border border-cyan-500/30">
             <button id="tab-mode-personal" onclick="switchWorkspaceMode('personal')" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 border transition border-cyan-400/80 bg-cyan-500/20 text-cyan-300 shadow-[0_0_12px_rgba(0,240,255,0.3)]">
                 <svg class="svg-icon text-cyan-400"><use href="#ic-shield"></use></svg>
                 <span>Keamanan Pribadi</span>
             </button>
             <button id="tab-mode-global" onclick="switchWorkspaceMode('global')" class="px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-2 border transition border-transparent text-slate-400 hover:text-white hover:bg-slate-800/60">
                 <svg class="svg-icon text-rose-400"><use href="#ic-crosshair"></use></svg>
-                <span>Peristiwa Dunia (Attacker Radar)</span>
+                <span>Radar Serangan Dunia</span>
                 <span class="inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">LIVE</span>
             </button>
         </div>
 
-        <!-- Right: Utility Controls & Modals -->
+        <!-- Right: Map View Toggles & SOC Utility Controls -->
         <div class="flex items-center gap-1.5 sm:gap-2">
-            <!-- PoP Badge -->
-            <div id="cf-pop-badge-sm" class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-700/60 text-[11px] font-mono text-slate-300" title="Cloudflare Edge Anycast PoP">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                <span>PoP:</span>
-                <span id="pop-location-sm" class="text-cyan-300 font-bold">MDC-EDGE</span>
+            <!-- Map View Toggle: Tactical 2D (FortiGuard) vs 3D Globe -->
+            <div id="map-style-toggle-group" class="hud-panel rounded-xl p-0.5 flex items-center border border-slate-700/60 bg-slate-900/80">
+                <button id="btn-view-map-tactical" onclick="switchMapVisualMode('tactical')" class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition bg-cyan-500/25 text-cyan-300 border border-cyan-500/40 shadow-sm" title="Peta Dunia Taktis Lengkap (FortiGuard Style)">
+                    <svg class="svg-icon text-cyan-400 w-3.5 h-3.5"><use href="#ic-map"></use></svg>
+                    <span class="hidden md:inline">Peta Taktis</span>
+                </button>
+                <button id="btn-view-map-globe" onclick="switchMapVisualMode('globe')" class="px-2.5 py-1 rounded-lg text-xs font-mono font-bold flex items-center gap-1.5 transition text-slate-400 hover:text-white" title="Bola Dunia 3D (Three.js WebGL)">
+                    <svg class="svg-icon text-slate-400 w-3.5 h-3.5"><use href="#ic-globe"></use></svg>
+                    <span class="hidden md:inline">Globe 3D</span>
+                </button>
             </div>
 
             <!-- Sound Alarm Toggle -->
-            <button id="btn-sound-toggle" onclick="toggleSoundAlarm()" class="px-2.5 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700/60 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 text-xs font-mono transition" title="Alarm Audio">
+            <button id="btn-sound-toggle" onclick="toggleSoundAlarm()" class="px-2.5 py-1.5 rounded-xl bg-slate-900/80 border border-slate-700/60 hover:border-cyan-500/50 text-slate-300 hover:text-cyan-300 text-xs font-mono transition" title="Alarm Audio Radar">
                 <span id="sound-icon">🔊</span>
             </button>
 
