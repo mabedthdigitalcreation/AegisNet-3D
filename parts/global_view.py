@@ -133,33 +133,79 @@ GLOBAL_VIEW = """
 
         <!-- Center Viewport: Threat Map HUD Overlay & Live Stream Ticker -->
         <div class="flex-1 min-h-[460px] xl:min-h-0 relative pointer-events-none flex flex-col justify-between items-center p-1 sm:p-2 gap-2.5 order-1 xl:order-2 min-w-0">
-            <!-- Top Floating HUD: Real-time Telemetry Status Bar -->
-            <div class="hud-panel pointer-events-auto rounded-2xl px-4 py-2 flex flex-wrap items-center justify-center gap-2 sm:gap-4 md:gap-6 text-xs font-mono shadow-2xl bg-slate-950/90 border border-rose-500/30">
-                <div class="flex items-center gap-1.5">
-                    <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
-                    <span class="text-slate-400">Laju Serangan:</span>
-                    <strong id="hdr-attack-rate" class="text-rose-400 font-bold tracking-wider">3.8 /dtk</strong>
+            <!-- Top Floating HUD: Real-time Telemetry Status Bar & Country Filter -->
+            <div class="hud-panel pointer-events-auto rounded-2xl px-3 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs font-mono shadow-2xl bg-slate-950/90 border border-rose-500/30 w-full max-w-5xl">
+                <div class="flex flex-wrap items-center gap-2 sm:gap-4 md:gap-5">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                        <span class="text-slate-400">Laju:</span>
+                        <strong id="hdr-attack-rate" class="text-rose-400 font-bold tracking-wider">3.8 /dtk</strong>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="text-slate-400">Total:</span>
+                        <strong id="hdr-total-attacks" class="text-amber-300 font-bold">0</strong>
+                    </div>
+                    <div class="hidden sm:flex items-center gap-1.5">
+                        <span class="text-slate-400">C2 Server:</span>
+                        <strong id="pill-global-c2-count" class="text-rose-400 font-bold">176</strong>
+                    </div>
+                    <div class="hidden md:flex items-center gap-1.5">
+                        <span class="text-slate-400">Ransomware:</span>
+                        <span id="pill-global-ransom-count" class="text-amber-400 font-bold">16,072</span>
+                    </div>
+                    <div class="hidden lg:flex items-center gap-1.5">
+                        <span class="text-slate-400">KEV:</span>
+                        <span id="pill-global-kev-count" class="text-cyan-300 font-bold">1,210</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                        <span id="pill-global-feed-status" class="text-emerald-400 font-bold text-[11px]">FEED SYNCED</span>
+                    </div>
                 </div>
-                <div class="flex items-center gap-1.5">
-                    <span class="text-slate-400">Total Terdeteksi:</span>
-                    <strong id="hdr-total-attacks" class="text-amber-300 font-bold">0</strong>
+
+                <!-- FortiGuard Country Filter Dropdown -->
+                <div class="flex items-center gap-1.5 ml-auto">
+                    <span class="text-rose-300 font-bold text-[11px] flex items-center gap-1">
+                        <svg class="svg-icon w-3.5 h-3.5 text-rose-400"><use href="#ic-crosshair"></use></svg>
+                        <span>Filter Negara:</span>
+                    </span>
+                    <select id="country-filter-select" onchange="onCountrySelectChange(this)" class="bg-slate-900 border border-rose-500/40 rounded-lg px-2.5 py-1 text-xs font-mono text-slate-100 focus:outline-none focus:border-rose-400 max-w-[210px] cursor-pointer">
+                        <option value="">🌐 Semua Negara (Global View)</option>
+                        <option value="US">United States (Amerika Utara)</option>
+                        <option value="ID">Indonesia (Asia)</option>
+                        <option value="DE">Germany (Eropa)</option>
+                        <option value="GB">United Kingdom (Eropa)</option>
+                        <option value="FR">France (Eropa)</option>
+                        <option value="CA">Canada (Amerika Utara)</option>
+                        <option value="AU">Australia (Oceania)</option>
+                        <option value="IN">India (Asia)</option>
+                        <option value="BR">Brazil (Amerika Selatan)</option>
+                        <option value="JP">Japan (Asia)</option>
+                        <option value="SG">Singapore (Asia)</option>
+                    </select>
                 </div>
-                <div class="hidden sm:flex items-center gap-1.5">
-                    <span class="text-slate-400">C2 Server Aktif:</span>
-                    <strong id="pill-global-c2-count" class="text-rose-400 font-bold">176</strong>
+            </div>
+
+            <!-- Country Filter Active Indicator Banner (FortiGuard Telemetry HUD) -->
+            <div id="country-filter-indicator" class="hidden hud-panel pointer-events-auto rounded-xl px-4 py-2 text-xs font-mono bg-rose-950/80 border border-rose-500/60 shadow-[0_0_20px_rgba(244,63,94,0.3)] backdrop-blur-md flex flex-wrap items-center justify-between gap-3 w-full max-w-3xl transition">
+                <div class="flex items-center gap-2.5">
+                    <span class="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-white font-bold tracking-wide" id="cf-country-name">Indonesia (ID)</span>
+                            <span class="px-1.5 py-0.2 rounded text-[9px] bg-rose-500/30 text-rose-200 border border-rose-500/50 uppercase font-bold">RADAR TERKUNCI</span>
+                        </div>
+                        <div class="text-[11px] text-rose-200/80 flex items-center gap-3 mt-0.5">
+                            <span id="cf-country-meta">Wilayah: Asia / South-Eastern Asia</span>
+                            <span>&bull;</span>
+                            <span id="cf-country-count" class="text-amber-300 font-bold">Memetakan insiden...</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="hidden md:flex items-center gap-1.5">
-                    <span class="text-slate-400">Ransomware Post:</span>
-                    <span id="pill-global-ransom-count" class="text-amber-400 font-bold">16,072</span>
-                </div>
-                <div class="hidden lg:flex items-center gap-1.5">
-                    <span class="text-slate-400">KEV Zero-Day:</span>
-                    <span id="pill-global-kev-count" class="text-cyan-300 font-bold">1,210</span>
-                </div>
-                <div class="flex items-center gap-1.5">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                    <span id="pill-global-feed-status" class="text-emerald-400 font-bold text-[11px]">FEED SYNCED</span>
-                </div>
+                <button onclick="clearCountryFilter()" class="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/40 border border-rose-500/50 text-rose-100 text-xs font-mono font-bold transition flex items-center gap-1">
+                    <span>Hapus Filter</span>
+                    <span>✕</span>
+                </button>
             </div>
 
             <!-- Center Reticle / Notice Badge -->

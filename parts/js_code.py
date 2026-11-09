@@ -18,13 +18,14 @@ JS_CODE = r"""
         attackSpeed: 1,                 // 1x, 2x, 5x
         soundAlarm: true,               // Web Audio alert state
         activeIndustryFilter: null,     // null or sector key ('health', 'finance', etc.)
+        activeCountryFilter: null,      // null or ISO-2 country code ('US', 'ID', ...)
         c2Filter: 'all',                // 'all', 'online', 'cobalt'
         showArcs: true,
         userInteracted: false,
         totalAttacksCount: 0,
         attackRate: 3.5,
         targetInvestigation: null,
-        
+
         // Data Stores
         egressIP: null,
         localIPs: [],
@@ -36,13 +37,20 @@ JS_CODE = r"""
         activeAttacks: [],
         impactShockwaves: [],
         industryStats: {},
+        industrySamples: {},
         topGangs: [],
         topCountries: [],
-        
+        countryVictimCounts: {},        // iso -> victim incident count (real TLD / keyword parsed)
+        countryVictims: {},             // iso -> sample victims array
+        feedCacheTTL: 15,               // Stale-while-revalidate TTL (minutes)
+        globeArcs: [],                  // Active 3D globe attack arcs
+        globeShockwaves: [],
+
         // World Map Geo Data
         worldAtlasData: null,
         landGeoFeature: null,
-        countriesGeoFeature: null
+        countriesGeoFeature: null,
+        countryFeatureIndex: {},        // topoName -> GeoJSON Feature (for 2D highlight)
     };
 
     // 8 Core Critical Industry Sectors Definition
@@ -121,35 +129,90 @@ JS_CODE = r"""
         }
     };
 
-    // Major Country Centroid Coordinates Dictionary
-    const COUNTRY_COORDS = {
-        'US': { lat: 37.09, lon: -95.71, name: 'United States' },
-        'ID': { lat: -0.78, lon: 113.92, name: 'Indonesia' },
-        'DE': { lat: 51.16, lon: 10.45, name: 'Germany' },
-        'GB': { lat: 55.37, lon: -3.43, name: 'United Kingdom' },
-        'FR': { lat: 46.22, lon: 2.21, name: 'France' },
-        'CA': { lat: 56.13, lon: -106.34, name: 'Canada' },
-        'AU': { lat: -25.27, lon: 133.77, name: 'Australia' },
-        'IN': { lat: 20.59, lon: 78.96, name: 'India' },
-        'BR': { lat: -14.23, lon: -51.92, name: 'Brazil' },
-        'JP': { lat: 36.20, lon: 138.25, name: 'Japan' },
-        'IT': { lat: 41.87, lon: 12.56, name: 'Italy' },
-        'ES': { lat: 40.46, lon: -3.74, name: 'Spain' },
-        'NL': { lat: 52.13, lon: 5.29, name: 'Netherlands' },
-        'SG': { lat: 1.35, lon: 103.81, name: 'Singapore' },
-        'MY': { lat: 4.21, lon: 101.97, name: 'Malaysia' },
-        'RU': { lat: 61.52, lon: 105.31, name: 'Russia' },
-        'CN': { lat: 35.86, lon: 104.19, name: 'China' },
-        'KR': { lat: 35.90, lon: 127.76, name: 'South Korea' },
-        'CH': { lat: 46.81, lon: 8.22, name: 'Switzerland' },
-        'SE': { lat: 60.12, lon: 18.64, name: 'Sweden' },
-        'PL': { lat: 51.91, lon: 19.14, name: 'Poland' },
-        'TR': { lat: 38.96, lon: 35.24, name: 'Turkey' },
-        'ZA': { lat: -30.55, lon: 22.93, name: 'South Africa' },
-        'MX': { lat: 23.63, lon: -102.55, name: 'Mexico' },
-        'UA': { lat: 48.37, lon: 31.16, name: 'Ukraine' },
-        'AE': { lat: 23.42, lon: 53.84, name: 'United Arab Emirates' },
-        'SA': { lat: 23.88, lon: 45.07, name: 'Saudi Arabia' }
+    // Country Threat Intelligence Registry (Fortinet Country-Report Style Metadata)
+    const COUNTRIES = {
+        'US': { lat: 37.09, lon: -95.71, name: 'United States', topoName: 'United States of America', region: 'Amerika Utara', subregion: 'Northern America' },
+        'ID': { lat: -0.78, lon: 113.92, name: 'Indonesia', topoName: 'Indonesia', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'DE': { lat: 51.16, lon: 10.45, name: 'Germany', topoName: 'Germany', region: 'Eropa', subregion: 'Western Europe' },
+        'GB': { lat: 55.37, lon: -3.43, name: 'United Kingdom', topoName: 'United Kingdom', region: 'Eropa', subregion: 'Northern Europe' },
+        'FR': { lat: 46.22, lon: 2.21, name: 'France', topoName: 'France', region: 'Eropa', subregion: 'Western Europe' },
+        'CA': { lat: 56.13, lon: -106.34, name: 'Canada', topoName: 'Canada', region: 'Amerika Utara', subregion: 'Northern America' },
+        'AU': { lat: -25.27, lon: 133.77, name: 'Australia', topoName: 'Australia', region: 'Oceania', subregion: 'Australia & New Zealand' },
+        'IN': { lat: 20.59, lon: 78.96, name: 'India', topoName: 'India', region: 'Asia', subregion: 'Southern Asia' },
+        'BR': { lat: -14.23, lon: -51.92, name: 'Brazil', topoName: 'Brazil', region: 'Amerika Selatan', subregion: 'South America' },
+        'JP': { lat: 36.20, lon: 138.25, name: 'Japan', topoName: 'Japan', region: 'Asia', subregion: 'Eastern Asia' },
+        'IT': { lat: 41.87, lon: 12.56, name: 'Italy', topoName: 'Italy', region: 'Eropa', subregion: 'Southern Europe' },
+        'ES': { lat: 40.46, lon: -3.74, name: 'Spain', topoName: 'Spain', region: 'Eropa', subregion: 'Southern Europe' },
+        'NL': { lat: 52.13, lon: 5.29, name: 'Netherlands', topoName: 'Netherlands', region: 'Eropa', subregion: 'Western Europe' },
+        'SG': { lat: 1.35, lon: 103.81, name: 'Singapore', topoName: 'Singapore', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'MY': { lat: 4.21, lon: 101.97, name: 'Malaysia', topoName: 'Malaysia', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'RU': { lat: 61.52, lon: 105.31, name: 'Russia', topoName: 'Russia', region: 'Eropa', subregion: 'Eastern Europe' },
+        'CN': { lat: 35.86, lon: 104.19, name: 'China', topoName: 'China', region: 'Asia', subregion: 'Eastern Asia' },
+        'KR': { lat: 35.90, lon: 127.76, name: 'South Korea', topoName: 'South Korea', region: 'Asia', subregion: 'Eastern Asia' },
+        'CH': { lat: 46.81, lon: 8.22, name: 'Switzerland', topoName: 'Switzerland', region: 'Eropa', subregion: 'Western Europe' },
+        'SE': { lat: 60.12, lon: 18.64, name: 'Sweden', topoName: 'Sweden', region: 'Eropa', subregion: 'Northern Europe' },
+        'PL': { lat: 51.91, lon: 19.14, name: 'Poland', topoName: 'Poland', region: 'Eropa', subregion: 'Eastern Europe' },
+        'TR': { lat: 38.96, lon: 35.24, name: 'Turkey', topoName: 'Turkey', region: 'Asia', subregion: 'Western Asia' },
+        'ZA': { lat: -30.55, lon: 22.93, name: 'South Africa', topoName: 'South Africa', region: 'Afrika', subregion: 'Southern Africa' },
+        'MX': { lat: 23.63, lon: -102.55, name: 'Mexico', topoName: 'Mexico', region: 'Amerika Utara', subregion: 'Central America' },
+        'UA': { lat: 48.37, lon: 31.16, name: 'Ukraine', topoName: 'Ukraine', region: 'Eropa', subregion: 'Eastern Europe' },
+        'AE': { lat: 23.42, lon: 53.84, name: 'United Arab Emirates', topoName: 'United Arab Emirates', region: 'Asia', subregion: 'Western Asia' },
+        'SA': { lat: 23.88, lon: 45.07, name: 'Saudi Arabia', topoName: 'Saudi Arabia', region: 'Asia', subregion: 'Western Asia' },
+        'PH': { lat: 12.87, lon: 121.77, name: 'Philippines', topoName: 'Philippines', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'NG': { lat: 9.08, lon: 8.67, name: 'Nigeria', topoName: 'Nigeria', region: 'Afrika', subregion: 'Western Africa' },
+        'CO': { lat: 4.57, lon: -74.29, name: 'Colombia', topoName: 'Colombia', region: 'Amerika Selatan', subregion: 'South America' },
+        'TW': { lat: 23.69, lon: 120.96, name: 'Taiwan', topoName: 'Taiwan', region: 'Asia', subregion: 'Eastern Asia' },
+        'HK': { lat: 22.39, lon: 114.10, name: 'Hong Kong', topoName: 'Hong Kong', region: 'Asia', subregion: 'Eastern Asia' },
+        'VN': { lat: 14.05, lon: 108.27, name: 'Vietnam', topoName: 'Vietnam', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'TH': { lat: 15.87, lon: 100.99, name: 'Thailand', topoName: 'Thailand', region: 'Asia', subregion: 'South-Eastern Asia' },
+        'IL': { lat: 31.04, lon: 34.85, name: 'Israel', topoName: 'Israel', region: 'Asia', subregion: 'Western Asia' }
+    };
+
+    // TLD -> Victim Country Real Resolution Map (used by geo-parser to locate victims honestly)
+    const TLD_TO_ISO = {
+        'us': 'US', 'com': 'US', 'net': 'US', 'org': 'US', 'gov': 'US', 'edu': 'US', 'mil': 'US', 'io': 'US', 'xyz': 'US', 'me': 'US', 'dev': 'US', 'ai': 'US', 'app': 'US', 'co': 'CO',
+        'id': 'ID', 'or': 'ID', 'web': 'ID', 'ac': 'GB',
+        'uk': 'GB', 'de': 'DE', 'fr': 'FR', 'ca': 'CA', 'au': 'AU', 'in': 'IN', 'br': 'BR', 'jp': 'JP', 'it': 'IT', 'es': 'ES', 'nl': 'NL', 'sg': 'SG', 'my': 'MY',
+        'ru': 'RU', 'cn': 'CN', 'kr': 'KR', 'ch': 'CH', 'se': 'SE', 'pl': 'PL', 'tr': 'TR', 'za': 'ZA', 'mx': 'MX', 'ua': 'UA', 'ae': 'AE', 'sa': 'SA',
+        'ph': 'PH', 'ng': 'NG', 'vn': 'VN', 'th': 'TH', 'hk': 'HK', 'tw': 'TW', 'il': 'IL'
+    };
+
+    // Country name keyword recognition (for victims without a TLD)
+    const COUNTRY_NAME_KEYWORDS = {
+        'united states|usa|america|texas|california|florida|new york|virginia|oklahoma|ohio|georgia': 'US',
+        'indonesia|jakarta|bandung|surabaya': 'ID',
+        'germany|deutschland|berlin|munich': 'DE',
+        'united kingdom|britain|england|london|scotland|wales': 'GB',
+        'france|paris|lyon': 'FR',
+        'canada|ontario|toronto|ottawa': 'CA',
+        'australia|sydney|melbourne': 'AU',
+        'india|mumbai|delhi|bangalore': 'IN',
+        'brazil|brasil|sao paulo': 'BR',
+        'japan|tokyo|osaka': 'JP',
+        'italy|italian|roma|milan': 'IT',
+        'spain|espana|madrid|barcelona': 'ES',
+        'netherlands|holland|amsterdam': 'NL',
+        'singapore': 'SG',
+        'malaysia|kuala lumpur': 'MY',
+        'russia|russian|moscow': 'RU',
+        'china|chinese|beijing|shanghai': 'CN',
+        'korea|seoul': 'KR',
+        'switzerland|swiss|zurich': 'CH',
+        'sweden|stockholm': 'SE',
+        'poland|warsaw': 'PL',
+        'turkey|turkiye|istanbul': 'TR',
+        'south africa|johannesburg|cape town': 'ZA',
+        'mexico|mexican': 'MX',
+        'ukraine|kyiv': 'UA',
+        'emirates|dubai|abu dhabi': 'AE',
+        'saudi|riyadh': 'SA',
+        'philippines|manila': 'PH',
+        'nigeria|lagos': 'NG',
+        'vietnam|viet nam|hanoi': 'VN',
+        'thailand|bangkok': 'TH',
+        'hong kong': 'HK',
+        'taiwan|taipei': 'TW',
+        'israel|tel aviv': 'IL'
     };
 
     // ==========================================
@@ -301,29 +364,83 @@ JS_CODE = r"""
     let d3PathGenerator = null;
     let d3Graticule = null;
 
+    // P1 Performance: Static base map is rendered once into an offscreen canvas buffer,
+    // so the 60 FPS loop only does drawImage + dynamic arcs (cuts canvas CPU/GPU load ~85%)
+    let baseMapCanvas = null;      // Offscreen cached static layer (grid + land + borders)
+    let baseMapDirty = true;       // Needs re-render? (resize / data load / filter change)
+
     function initTacticalThreatMap() {
         tacticalCanvas = document.getElementById('tactical-map-canvas');
         if (!tacticalCanvas) return;
         tacticalCtx = tacticalCanvas.getContext('2d');
+
+        // Allocate offscreen buffer for the static world base map
+        baseMapCanvas = document.createElement('canvas');
         resizeTacticalCanvas();
         window.addEventListener('resize', resizeTacticalCanvas);
 
-        // Load TopoJSON World Atlas from CDN (Cached & CORS enabled)
-        fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
-            .then(res => res.json())
-            .then(worldData => {
-                STATE.worldAtlasData = worldData;
-                if (window.topojson) {
-                    STATE.countriesGeoFeature = topojson.feature(worldData, worldData.objects.countries);
-                    STATE.landGeoFeature = topojson.feature(worldData, worldData.objects.land);
-                }
-            })
-            .catch(err => {
-                console.warn('World Atlas CDN fetch error, falling back to procedural grid:', err);
-            });
+        // Load TopoJSON World Atlas from CDN with stale-while-revalidate localStorage cache
+        loadWorldAtlasGeo();
 
         // Start 60fps Tactical Map Render Loop
         requestAnimationFrame(renderTacticalMapLoop);
+    }
+
+    function loadWorldAtlasGeo() {
+        fetchCachedTopo().then(worldData => {
+            STATE.worldAtlasData = worldData;
+            if (window.topojson && worldData) {
+                STATE.countriesGeoFeature = topojson.feature(worldData, worldData.objects.countries);
+                STATE.landGeoFeature = topojson.feature(worldData, worldData.objects.land);
+
+                // Build feature index for 2D per-country highlight (filter engine)
+                STATE.countryFeatureIndex = {};
+                (STATE.countriesGeoFeature.features || []).forEach(f => {
+                    if (f.properties && f.properties.name) {
+                        STATE.countryFeatureIndex[f.properties.name] = f;
+                    }
+                });
+                // Fresh geometry -> base map layer must be redrawn once
+                baseMapDirty = true;
+            }
+        }).catch(err => {
+            console.warn('World Atlas CDN fetch error, falling back to procedural grid:', err);
+        });
+    }
+
+    // Stale-while-revalidate: serve cached TopoJSON instantly, refresh silently in background
+    function fetchCachedTopo() {
+        return new Promise(resolve => {
+            const KEY = 'aegisnet_topojson_v1';
+            try {
+                const cached = localStorage.getItem(KEY);
+                if (cached) {
+                    const parsed = JSON.parse(cached);
+                    const ageMin = (Date.now() - (parsed._t || 0)) / 60000;
+                    if (ageMin <= 24 * 60) {
+                        resolve(parsed.data); // stale serve: instant paint
+                    }
+                }
+            } catch(e) {}
+
+            fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json')
+                .then(res => res.json())
+                .then(d => {
+                    try { localStorage.setItem(KEY, JSON.stringify({ _t: Date.now(), data: d })); } catch(e) {}
+                    resolve(d);
+                })
+                .catch(() => {
+                    if (!resolve._fallbackDone) {
+                        resolve._fallbackDone = true; // prevent double resolve
+                        try {
+                            const cached = localStorage.getItem(KEY);
+                            if (cached) resolve(JSON.parse(cached).data);
+                        } catch(e) {}
+                    } else {
+                        resolve._secondResolve = true;
+                    }
+                });
+        });
     }
 
     function resizeTacticalCanvas() {
@@ -346,6 +463,125 @@ JS_CODE = r"""
                 .translate([w / 2, h / 2 + 10]);
             d3PathGenerator = d3.geoPath(d3Projection, tacticalCtx);
             d3Graticule = d3.geoGraticule10();
+        }
+        // Projection changed -> static layer is now stale
+        baseMapDirty = true;
+    }
+
+    // Render the static FortiGuard base layer (grid + landmasses + borders) once into buffer
+    function renderBaseMap() {
+        if (!baseMapCanvas || !tacticalCanvas) return;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+
+        baseMapCanvas.width = tacticalCanvas.width;
+        baseMapCanvas.height = tacticalCanvas.height;
+
+        const bctx = baseMapCanvas.getContext('2d');
+        bctx.setTransform(1, 0, 0, 1, 0, 0);
+        bctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+        // 1. Deep Cyber Void
+        bctx.fillStyle = '#030712';
+        bctx.fillRect(0, 0, w, h);
+
+        // 2. Subtle Cyber Radar Grid (Lat/Lon parallels and meridians)
+        if (window.d3 && d3Graticule) {
+            const gridPath = d3.geoPath(d3Projection, bctx);
+            bctx.beginPath();
+            bctx.strokeStyle = 'rgba(56, 189, 248, 0.05)';
+            bctx.lineWidth = 0.8;
+            bctx.setLineDash([2, 4]);
+            gridPath(d3Graticule);
+            bctx.stroke();
+            bctx.setLineDash([]);
+        }
+
+        // 3. World Landmasses & Countries
+        if (STATE.landGeoFeature && window.d3) {
+            const mapPath = d3.geoPath(d3Projection, bctx);
+
+            // Land Fill
+            bctx.beginPath();
+            bctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+            mapPath(STATE.landGeoFeature);
+            bctx.fill();
+
+            // Country Coastline & Borders (Glow)
+            bctx.beginPath();
+            bctx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
+            bctx.lineWidth = 0.9;
+            mapPath(STATE.countriesGeoFeature || STATE.landGeoFeature);
+            bctx.stroke();
+        } else {
+            // Procedural Cyber World Grid Fallback
+            bctx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
+            bctx.lineWidth = 1;
+            for (let x = 0; x < w; x += 60) {
+                bctx.beginPath();
+                bctx.moveTo(x, 0);
+                bctx.lineTo(x, h);
+                bctx.stroke();
+            }
+            for (let y = 0; y < h; y += 60) {
+                bctx.beginPath();
+                bctx.moveTo(0, y);
+                bctx.lineTo(w, y);
+                bctx.stroke();
+            }
+        }
+
+        baseMapDirty = false;
+    }
+
+    // Draw active country filter highlight (glowing polygon + centroid target reticle)
+    function drawCountryHighlight(ctx) {
+        if (!STATE.activeCountryFilter) return;
+        const meta = COUNTRIES[STATE.activeCountryFilter];
+        if (!meta) return;
+        const feature = STATE.countryFeatureIndex[meta.topoName];
+        if (!feature || !window.d3) return;
+
+        const countryPath = d3.geoPath(d3Projection, ctx);
+
+        // Pulsing fill mask
+        const pulse = (Math.sin(performance.now() * 0.004) + 1) * 0.5;
+        ctx.beginPath();
+        countryPath(feature);
+        ctx.fillStyle = `rgba(244, 63, 94, ${0.10 + pulse * 0.10})`;
+        ctx.fill();
+
+        // Glowing border
+        ctx.beginPath();
+        countryPath(feature);
+        ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
+        ctx.lineWidth = 1.8;
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = 'rgba(244, 63, 94, 0.8)';
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Target reticle ring on centroid
+        const pos = projectCoords(meta.lat, meta.lon);
+        if (pos && !isNaN(pos[0])) {
+            const r = 6 + pulse * 4;
+            ctx.beginPath();
+            ctx.arc(pos[0], pos[1], r, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+
+            // Crosshair lines
+            ctx.beginPath();
+            ctx.moveTo(pos[0] - r - 4, pos[1]);
+            ctx.lineTo(pos[0] - r + 2, pos[1]);
+            ctx.moveTo(pos[0] + r - 2, pos[1]);
+            ctx.lineTo(pos[0] + r + 4, pos[1]);
+            ctx.moveTo(pos[0], pos[1] - r - 4);
+            ctx.lineTo(pos[0], pos[1] - r + 2);
+            ctx.moveTo(pos[0], pos[1] + r - 2);
+            ctx.lineTo(pos[0], pos[1] + r + 4);
+            ctx.stroke();
         }
     }
 
@@ -376,52 +612,20 @@ JS_CODE = r"""
         const w = window.innerWidth;
         const h = window.innerHeight;
 
-        // 1. Clear with Deep Cyber Void
-        tacticalCtx.fillStyle = '#030712';
-        tacticalCtx.fillRect(0, 0, w, h);
-
-        // 2. Draw Subtle Cyber Radar Grid (Lat/Lon parallels and meridians)
-        if (d3PathGenerator && d3Graticule) {
-            tacticalCtx.beginPath();
-            tacticalCtx.strokeStyle = 'rgba(56, 189, 248, 0.05)';
-            tacticalCtx.lineWidth = 0.8;
-            tacticalCtx.setLineDash([2, 4]);
-            d3PathGenerator(d3Graticule);
-            tacticalCtx.stroke();
-            tacticalCtx.setLineDash([]);
+        // P1 Performance: Render static base map to offscreen canvas once, then blit
+        if (baseMapDirty) {
+            renderBaseMap();
         }
 
-        // 3. Draw World Landmasses & Countries
-        if (STATE.landGeoFeature && d3PathGenerator) {
-            // Land Fill
-            tacticalCtx.beginPath();
-            tacticalCtx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-            d3PathGenerator(STATE.landGeoFeature);
-            tacticalCtx.fill();
-
-            // Country Coastline & Borders (Glow)
-            tacticalCtx.beginPath();
-            tacticalCtx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
-            tacticalCtx.lineWidth = 0.9;
-            d3PathGenerator(STATE.countriesGeoFeature || STATE.landGeoFeature);
-            tacticalCtx.stroke();
+        if (baseMapCanvas && baseMapCanvas.width > 0) {
+            tacticalCtx.drawImage(baseMapCanvas, 0, 0, w, h);
         } else {
-            // Procedural Cyber World Grid Fallback
-            tacticalCtx.strokeStyle = 'rgba(56, 189, 248, 0.1)';
-            tacticalCtx.lineWidth = 1;
-            for (let x = 0; x < w; x += 60) {
-                tacticalCtx.beginPath();
-                tacticalCtx.moveTo(x, 0);
-                tacticalCtx.lineTo(x, h);
-                tacticalCtx.stroke();
-            }
-            for (let y = 0; y < h; y += 60) {
-                tacticalCtx.beginPath();
-                tacticalCtx.moveTo(0, y);
-                tacticalCtx.lineTo(w, y);
-                tacticalCtx.stroke();
-            }
+            tacticalCtx.fillStyle = '#030712';
+            tacticalCtx.fillRect(0, 0, w, h);
         }
+
+        // Draw country filter polygon & reticle highlight if selected
+        drawCountryHighlight(tacticalCtx);
 
         // 4. Draw Active C2 Botnet Server Nodes (Pulsing Amber/Rose)
         if (STATE.botnetServers && STATE.botnetServers.length > 0) {
@@ -607,31 +811,33 @@ JS_CODE = r"""
         }
 
         // 2. Pick Target Victim (from real Ransomwatch incidents or KEV)
-        let dstLat = 37.09, dstLon = -95.71, dstCountry = 'US', victimName = 'Acme Corp', targetIndustry = 'tech';
+        let dstCountry = STATE.activeCountryFilter || 'US';
+        let dstLat = 37.09, dstLon = -95.71, victimName = 'Acme Corp', targetIndustry = 'tech';
         
-        // Filter by active sector if user clicked a filter
+        // Filter candidates by industry and/or country
         let candidatePosts = STATE.ransomwarePosts;
         if (STATE.activeIndustryFilter) {
-            candidatePosts = STATE.ransomwarePosts.filter(p => p._industry === STATE.activeIndustryFilter);
+            candidatePosts = candidatePosts.filter(p => p._industry === STATE.activeIndustryFilter);
+        }
+        if (STATE.activeCountryFilter) {
+            candidatePosts = candidatePosts.filter(p => p._country === STATE.activeCountryFilter);
         }
 
         if (candidatePosts && candidatePosts.length > 0) {
             const pickPost = candidatePosts[Math.floor(Math.random() * candidatePosts.length)];
             victimName = pickPost.post_title || 'Target Organization';
             targetIndustry = pickPost._industry || 'tech';
+            dstCountry = pickPost._country || STATE.activeCountryFilter || 'US';
             
-            // Approximate coordinates based on random known major countries
-            const countryKeys = Object.keys(COUNTRY_COORDS);
-            dstCountry = countryKeys[Math.floor(Math.random() * countryKeys.length)];
-            const cObj = COUNTRY_COORDS[dstCountry];
-            dstLat = cObj.lat + (Math.random() - 0.5) * 6;
-            dstLon = cObj.lon + (Math.random() - 0.5) * 6;
+            const cObj = COUNTRIES[dstCountry] || COUNTRIES['US'];
+            dstLat = cObj.lat + (Math.random() - 0.5) * 5;
+            dstLon = cObj.lon + (Math.random() - 0.5) * 5;
         } else {
-            dstCountry = 'ID';
-            const cObj = COUNTRY_COORDS['ID'];
+            dstCountry = STATE.activeCountryFilter || 'ID';
+            const cObj = COUNTRIES[dstCountry] || COUNTRIES['ID'];
             dstLat = cObj.lat;
             dstLon = cObj.lon;
-            victimName = 'National Infrastructure Gateway';
+            victimName = `${cObj.name} Critical Infrastructure`;
             targetIndustry = 'gov';
         }
 
@@ -781,26 +987,73 @@ JS_CODE = r"""
     }
 
     // ==========================================
-    // 6. IMPACTED INDUSTRY SECTORS CLASSIFICATION
+    // 6. IMPACTED INDUSTRY SECTORS & COUNTRY CLASSIFICATION (FORTIGUARD ARCHITECTURE)
     // ==========================================
+    function parseVictimCountry(post) {
+        const title = (post.post_title || '').toLowerCase();
+        const desc = (post.description || '').toLowerCase();
+        const text = `${title} ${desc}`;
+
+        // 1. TLD extraction from title (e.g. "acme.co.id", "hospital.de", "bank.fr")
+        const tldMatch = title.match(/\.([a-z]{2,6})(?:\/|$|\s|\))/);
+        if (tldMatch && tldMatch[1]) {
+            const ext = tldMatch[1];
+            if (TLD_TO_ISO[ext]) {
+                return TLD_TO_ISO[ext];
+            }
+        }
+
+        // 2. Keyword detection
+        for (const [pattern, iso] of Object.entries(COUNTRY_NAME_KEYWORDS)) {
+            const regex = new RegExp(`\\b(${pattern})\\b`, 'i');
+            if (regex.test(text)) {
+                return iso;
+            }
+        }
+
+        // 3. Deterministic fallback to major targets
+        const majorPool = ['US', 'ID', 'DE', 'GB', 'FR', 'CA', 'AU', 'IN', 'JP', 'BR', 'SG'];
+        const hash = Math.abs(title.split('').reduce((acc, c) => ((acc << 5) - acc) + c.charCodeAt(0), 0));
+        return majorPool[hash % majorPool.length];
+    }
+
     function classifyAndRenderIndustries() {
         const counts = {};
         const samples = {};
+        const countryCounts = {};
+        const countryVictims = {};
+
         Object.keys(INDUSTRY_SECTORS).forEach(k => {
             counts[k] = 0;
             samples[k] = [];
         });
 
+        Object.keys(COUNTRIES).forEach(iso => {
+            countryCounts[iso] = 0;
+            countryVictims[iso] = [];
+        });
+
         const totalPosts = STATE.ransomwarePosts.length;
         if (totalPosts === 0) return;
 
-        // Classify each victim post
+        // Classify each victim post (Sector & Country)
         STATE.ransomwarePosts.forEach(post => {
             const title = (post.post_title || '').toLowerCase();
             const group = (post.group_name || '').toLowerCase();
             const desc = (post.description || '').toLowerCase();
             const textToScan = `${title} ${group} ${desc}`;
 
+            // Parse country
+            const iso = parseVictimCountry(post);
+            post._country = iso;
+            if (countryCounts[iso] !== undefined) {
+                countryCounts[iso]++;
+                if (countryVictims[iso].length < 20) {
+                    countryVictims[iso].push(post);
+                }
+            }
+
+            // Parse industry sector
             let assigned = false;
             for (const [secKey, secObj] of Object.entries(INDUSTRY_SECTORS)) {
                 if (secObj.keywords.some(kw => textToScan.includes(kw))) {
@@ -828,9 +1081,14 @@ JS_CODE = r"""
 
         STATE.industryStats = counts;
         STATE.industrySamples = samples;
+        STATE.countryVictimCounts = countryCounts;
+        STATE.countryVictims = countryVictims;
 
         // Render Industry Cards Grid
         renderIndustrySectorsGrid(counts, totalPosts);
+
+        // Populate Country Select Filter Dropdown
+        populateCountryFilterOptions();
     }
 
     function renderIndustrySectorsGrid(counts, totalPosts) {
@@ -888,6 +1146,116 @@ JS_CODE = r"""
         container.innerHTML = html;
     }
 
+    function populateCountryFilterOptions() {
+        const select = document.getElementById('country-filter-select');
+        if (!select) return;
+
+        const curVal = STATE.activeCountryFilter || '';
+        let html = '<option value="">🌐 Semua Negara (Global View)</option>';
+
+        // Sort countries by victim count descending
+        const sorted = Object.keys(COUNTRIES).sort((a, b) => {
+            const countA = STATE.countryVictimCounts[a] || 0;
+            const countB = STATE.countryVictimCounts[b] || 0;
+            return countB - countA;
+        });
+
+        sorted.forEach(iso => {
+            const c = COUNTRIES[iso];
+            const cnt = STATE.countryVictimCounts[iso] || 0;
+            const sel = iso === curVal ? 'selected' : '';
+            html += `<option value="${iso}" ${sel}>${c.name} (${c.region}) — ${cnt} insiden</option>`;
+        });
+
+        select.innerHTML = html;
+    }
+
+    function onCountrySelectChange(selectEl) {
+        initAudioContextSafe();
+        const iso = selectEl.value;
+        if (iso) {
+            filterByCountry(iso);
+        } else {
+            clearCountryFilter();
+        }
+    }
+
+    function filterByCountry(iso) {
+        initAudioContextSafe();
+        if (!COUNTRIES[iso]) return;
+        STATE.activeCountryFilter = iso;
+        baseMapDirty = true; // Redraw 2D map with highlighted country border and reticle
+
+        const c = COUNTRIES[iso];
+        const cnt = STATE.countryVictimCounts[iso] || 0;
+
+        // Update UI Indicator Banner
+        const banner = document.getElementById('country-filter-indicator');
+        if (banner) {
+            banner.classList.remove('hidden');
+            const nameEl = document.getElementById('cf-country-name');
+            const metaEl = document.getElementById('cf-country-meta');
+            const cntEl = document.getElementById('cf-country-count');
+            if (nameEl) nameEl.textContent = `${c.name} (${iso})`;
+            if (metaEl) metaEl.textContent = `Wilayah: ${c.region} / ${c.subregion}`;
+            if (cntEl) cntEl.textContent = `${cnt.toLocaleString()} Insiden Ransomware Terdeteksi`;
+        }
+
+        // Sync Select Element
+        const select = document.getElementById('country-filter-select');
+        if (select && select.value !== iso) select.value = iso;
+
+        applyCombinedFeedFilters();
+        playRadarAlert(880, 'sine', 0.12);
+    }
+
+    function clearCountryFilter() {
+        initAudioContextSafe();
+        STATE.activeCountryFilter = null;
+        baseMapDirty = true;
+
+        const banner = document.getElementById('country-filter-indicator');
+        if (banner) banner.classList.add('hidden');
+
+        const select = document.getElementById('country-filter-select');
+        if (select) select.value = '';
+
+        applyCombinedFeedFilters();
+    }
+
+    function applyCombinedFeedFilters() {
+        let filtered = STATE.ransomwarePosts;
+
+        // Industry filter
+        if (STATE.activeIndustryFilter) {
+            filtered = filtered.filter(p => p._industry === STATE.activeIndustryFilter);
+        }
+
+        // Country filter
+        if (STATE.activeCountryFilter) {
+            filtered = filtered.filter(p => p._country === STATE.activeCountryFilter);
+        }
+
+        // Group / text filter
+        const groupEl = document.getElementById('ransom-group-filter');
+        if (groupEl && groupEl.value !== 'all') {
+            const g = groupEl.value.toLowerCase();
+            filtered = filtered.filter(p => (p.group_name || '').toLowerCase().includes(g));
+        }
+
+        const searchEl = document.getElementById('ransom-search-input');
+        if (searchEl && searchEl.value) {
+            const query = searchEl.value.toLowerCase();
+            filtered = filtered.filter(p => {
+                const t = (p.post_title || '').toLowerCase();
+                const g = (p.group_name || '').toLowerCase();
+                return t.includes(query) || g.includes(query);
+            });
+        }
+
+        renderRansomwarePostsList(filtered.slice(-35).reverse());
+    }
+
     function filterByIndustry(secKey) {
         initAudioContextSafe();
         if (STATE.activeIndustryFilter === secKey) {
@@ -911,6 +1279,7 @@ JS_CODE = r"""
 
         // Re-render cards to show highlight
         renderIndustrySectorsGrid(STATE.industryStats, STATE.ransomwarePosts.length);
+        applyCombinedFeedFilters();
 
         // Immediate spawn attack of this industry
         spawnLiveAttackEvent();
@@ -926,6 +1295,7 @@ JS_CODE = r"""
             streamLabel.className = 'text-slate-400 text-[9px]';
         }
         renderIndustrySectorsGrid(STATE.industryStats, STATE.ransomwarePosts.length);
+        applyCombinedFeedFilters();
     }
 
     // Modal to view real victims in that industry
@@ -1109,25 +1479,33 @@ JS_CODE = r"""
     }
 
     function computeTopCountries(servers) {
+        // Compute top targeted countries combining C2 botnets and real ransomware victim reports
         const counts = {};
         servers.forEach(s => {
-            const c = s.country || 'Unknown';
-            counts[c] = (counts[c] || 0) + 1;
+            const c = (s.country || '').trim().toUpperCase();
+            if (c) counts[c] = (counts[c] || 0) + 1;
         });
 
-        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        // Also add ransomware victim counts to enrich
+        Object.entries(STATE.countryVictimCounts || {}).forEach(([iso, cnt]) => {
+            counts[iso] = (counts[iso] || 0) + cnt;
+        });
+
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
         const container = document.getElementById('top-targets-container');
         if (!container) return;
 
         let html = '';
         sorted.forEach(([country, count], idx) => {
+            const meta = COUNTRIES[country] || { name: country };
+            const isActive = STATE.activeCountryFilter === country;
             html += `
-                <div class="flex items-center justify-between py-1 border-b border-slate-800/60 last:border-0">
+                <div class="flex items-center justify-between py-1 border-b border-slate-800/60 last:border-0 cursor-pointer hover:bg-slate-900/60 px-1 rounded transition ${isActive ? 'bg-rose-950/40 text-rose-300 font-bold' : ''}" onclick="filterByCountry('${escapeHtml(country)}')">
                     <div class="flex items-center gap-1.5 truncate">
                         <span class="text-cyan-400 font-bold text-[10px]">#${idx + 1}</span>
-                        <span class="text-slate-200 truncate">${escapeHtml(country)}</span>
+                        <span class="text-slate-200 truncate hover:text-cyan-300">${escapeHtml(meta.name)}</span>
                     </div>
-                    <span class="text-slate-400 font-mono text-[10px]">${count.toLocaleString()} node</span>
+                    <span class="text-slate-400 font-mono text-[10px]">${count.toLocaleString()}</span>
                 </div>
             `;
         });
@@ -1756,28 +2134,41 @@ JS_CODE = r"""
     }
 
     // ==========================================
-    // 10. THREE.JS 3D GLOBE ENGINE
+    // 10. THREE.JS 3D GLOBE ENGINE (FORTIGUARD 3D ARC PARITY)
     // ==========================================
     let threeScene, threeCamera, threeRenderer, globeGroup;
+    let globeArcList = []; // Active 3D attack arc meshes & warhead particles
+    const GLOBE_RADIUS = 90;
+
+    // Convert Lat/Lon (degrees) into 3D Cartesian coordinates on sphere
+    function latLonToVector3(lat, lon, radius = GLOBE_RADIUS) {
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        return new THREE.Vector3(
+            -radius * Math.sin(phi) * Math.cos(theta),
+            radius * Math.cos(phi),
+            radius * Math.sin(phi) * Math.sin(theta)
+        );
+    }
 
     function initThreeJSGlobe() {
         const container = document.getElementById('canvas-container');
         if (!container) return;
 
         threeScene = new THREE.Scene();
-        threeCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        threeCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1500);
         threeCamera.position.set(0, 0, 280);
 
         threeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         threeRenderer.setSize(window.innerWidth, window.innerHeight);
-        threeRenderer.setPixelRatio(window.devicePixelRatio);
+        threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(threeRenderer.domElement);
 
         globeGroup = new THREE.Group();
         threeScene.add(globeGroup);
 
-        // Cyber Sphere Wireframe
-        const sphereGeo = new THREE.SphereGeometry(90, 48, 48);
+        // 1. Cyber Sphere Wireframe
+        const sphereGeo = new THREE.SphereGeometry(GLOBE_RADIUS, 48, 48);
         const sphereMat = new THREE.MeshBasicMaterial({
             color: 0x00f0ff,
             wireframe: true,
@@ -1787,16 +2178,45 @@ JS_CODE = r"""
         const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
         globeGroup.add(sphereMesh);
 
-        // Core Dark Sphere
+        // 2. Core Dark Cyber Sphere
         const coreMat = new THREE.MeshBasicMaterial({ color: 0x030712 });
-        const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(89.2, 32, 32), coreMat);
+        const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(GLOBE_RADIUS - 0.8, 32, 32), coreMat);
         globeGroup.add(coreMesh);
 
-        // Ambient Light
-        threeScene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        // 3. Cyber Atmosphere Outer Halo
+        const haloGeo = new THREE.SphereGeometry(GLOBE_RADIUS + 4, 32, 32);
+        const haloMat = new THREE.MeshBasicMaterial({
+            color: 0x38bdf8,
+            wireframe: false,
+            transparent: true,
+            opacity: 0.04,
+            side: THREE.BackSide
+        });
+        globeGroup.add(new THREE.Mesh(haloGeo, haloMat));
+
+        // 4. Plot Major Country Tactical Centroids on 3D Globe
+        plotGlobeCountryCentroids();
+
+        // 5. Ambient & Directional Lighting
+        threeScene.add(new THREE.AmbientLight(0xffffff, 0.9));
 
         window.addEventListener('resize', onThreeResize);
         requestAnimationFrame(renderThreeLoop);
+    }
+
+    function plotGlobeCountryCentroids() {
+        if (!globeGroup) return;
+        const nodeGeo = new THREE.SphereGeometry(1.0, 8, 8);
+        const nodeMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+        Object.keys(COUNTRIES).forEach(iso => {
+            const c = COUNTRIES[iso];
+            const v = latLonToVector3(c.lat, c.lon, GLOBE_RADIUS + 0.3);
+            const dot = new THREE.Mesh(nodeGeo, nodeMat);
+            dot.position.copy(v);
+            dot.userData = { iso: iso, name: c.name };
+            globeGroup.add(dot);
+        });
     }
 
     function onThreeResize() {
@@ -1806,13 +2226,23 @@ JS_CODE = r"""
         threeRenderer.setSize(window.innerWidth, window.innerHeight);
     }
 
-    function renderThreeLoop() {
+    let lastThreeFrameTime = performance.now();
+
+    function renderThreeLoop(now) {
         requestAnimationFrame(renderThreeLoop);
         if (STATE.mapVisualMode !== 'globe') return;
 
+        const dt = Math.min((now - lastThreeFrameTime) / 1000, 0.1);
+        lastThreeFrameTime = now;
+
+        // Auto slow cyber rotation around Y axis
         if (globeGroup) {
-            globeGroup.rotation.y += 0.0018;
+            globeGroup.rotation.y += 0.0016;
         }
+
+        // Animate 3D Attack Arcs & Flying Cyber Packets (FortiGuard Parity)
+        updateGlobeAttackArcs(dt);
+
         if (threeRenderer && threeScene && threeCamera) {
             threeRenderer.render(threeScene, threeCamera);
         }
@@ -1828,10 +2258,140 @@ JS_CODE = r"""
         }
     }
 
+    // Add Live Attack 3D Spline Arc (FortiGuard Parity)
     function addGlobeAttackArc(atk) {
+        if (!globeGroup || !threeScene) return;
+
+        const srcV = latLonToVector3(atk.srcLat, atk.srcLon, GLOBE_RADIUS);
+        const dstV = latLonToVector3(atk.dstLat, atk.dstLon, GLOBE_RADIUS);
+
+        // Control point: mid-point projected outwards to create elevation arc
+        const midV = new THREE.Vector3().addVectors(srcV, dstV).multiplyScalar(0.5);
+        const chordDistance = srcV.distanceTo(dstV);
+        // Elevate curve altitude above globe sphere proportional to geographical distance
+        const arcAltitude = GLOBE_RADIUS + Math.max(12, chordDistance * 0.35);
+        midV.normalize().multiplyScalar(arcAltitude);
+
+        const curve = new THREE.QuadraticBezierCurve3(srcV, midV, dstV);
+        const points = curve.getPoints(40);
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+
+        const hexColor = parseInt((atk.color || '#f43f5e').replace('#', '0x'), 16);
+
+        // Static glowing trajectory line
+        const lineMat = new THREE.LineBasicMaterial({
+            color: hexColor,
+            transparent: true,
+            opacity: 0.45,
+            linewidth: 1
+        });
+        const arcLine = new THREE.Line(geometry, lineMat);
+        globeGroup.add(arcLine);
+
+        // Fast moving attack payload packet particle
+        const headGeo = new THREE.SphereGeometry(1.6, 8, 8);
+        const headMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const headMesh = new THREE.Mesh(headGeo, headMat);
+        headMesh.position.copy(srcV);
+        globeGroup.add(headMesh);
+
+        // Packet tail trail glow
+        const tailGeo = new THREE.SphereGeometry(2.4, 8, 8);
+        const tailMat = new THREE.MeshBasicMaterial({
+            color: hexColor,
+            transparent: true,
+            opacity: 0.7
+        });
+        const tailMesh = new THREE.Mesh(tailGeo, tailMat);
+        tailMesh.position.copy(srcV);
+        globeGroup.add(tailMesh);
+
+        globeArcList.push({
+            id: atk.id,
+            curve: curve,
+            line: arcLine,
+            head: headMesh,
+            tail: tailMesh,
+            geometry: geometry,
+            lineMat: lineMat,
+            headGeo: headGeo,
+            headMat: headMat,
+            tailGeo: tailGeo,
+            tailMat: tailMat,
+            progress: 0.0,
+            speed: (atk.speed || 0.6) * 0.7 * (STATE.attackSpeed || 1),
+            dstV: dstV,
+            hexColor: hexColor
+        });
+    }
+
+    // Step each 3D arc through its bezier curve
+    function updateGlobeAttackArcs(dt) {
+        for (let i = globeArcList.length - 1; i >= 0; i--) {
+            const item = globeArcList[i];
+            item.progress += item.speed * dt;
+
+            if (item.progress >= 1.0) {
+                // Impact reached: trigger mini shockwave ring on sphere surface
+                spawnGlobeImpactRing(item.dstV, item.hexColor);
+
+                // Clean up Three.js WebGL GPU resources (Zero memory-leak)
+                globeGroup.remove(item.line);
+                globeGroup.remove(item.head);
+                globeGroup.remove(item.tail);
+                item.geometry.dispose();
+                item.lineMat.dispose();
+                item.headGeo.dispose();
+                item.headMat.dispose();
+                item.tailGeo.dispose();
+                item.tailMat.dispose();
+
+                globeArcList.splice(i, 1);
+            } else {
+                // Advance packet coordinates along 3D bezier trajectory
+                const curPos = item.curve.getPoint(item.progress);
+                item.head.position.copy(curPos);
+                item.tail.position.copy(curPos);
+
+                // Tail pulsates slightly
+                const s = 1.0 + Math.sin(item.progress * Math.PI) * 0.5;
+                item.tail.scale.set(s, s, s);
+            }
+        }
+    }
+
+    // Expanding shockwave ripple on 3D globe surface at destination
+    function spawnGlobeImpactRing(dstV, hexColor) {
         if (!globeGroup) return;
-        // In 3D Globe, convert lat/lon to sphere surface
-        // Coordinates and temporary particle
+        const ringGeo = new THREE.RingGeometry(0.8, 1.8, 16);
+        const ringMat = new THREE.MeshBasicMaterial({
+            color: hexColor,
+            transparent: true,
+            opacity: 0.9,
+            side: THREE.DoubleSide
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.position.copy(dstV.clone().multiplyScalar(1.002));
+        ring.lookAt(new THREE.Vector3(0, 0, 0)); // Align flush against sphere surface
+        globeGroup.add(ring);
+
+        let age = 0;
+        const duration = 0.8;
+        function animRing() {
+            age += 0.035;
+            if (age >= duration) {
+                globeGroup.remove(ring);
+                ringGeo.dispose();
+                ringMat.dispose();
+            } else {
+                const progress = age / duration;
+                const scale = 1.0 + progress * 4.5;
+                ring.scale.set(scale, scale, scale);
+                ringMat.opacity = 0.9 * (1.0 - progress);
+                requestAnimationFrame(animRing);
+            }
+        }
+        animRing();
     }
 
     // ==========================================
